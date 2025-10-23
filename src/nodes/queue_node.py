@@ -3,6 +3,7 @@ import json
 import time
 import hashlib
 import bisect
+import asyncio
 from typing import List, Dict, Any, Optional
 
 # --- Consistent Hashing Implementation ---
