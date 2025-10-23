@@ -211,77 +211,86 @@ class RaftNode:
         print(f"Node {self.node_id}: Stepping down to Follower, term {new_term}")
     
     async def handle_request_vote(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Handler RequestVote RPC."""
-        term = payload['term']
-        candidate_id = payload['candidate_id']
-        
-        # 1. Reply false jika term < current_term
-        if term < self.current_term:
-            return {'term': self.current_term, 'vote_granted': False}
+        """Handler RequestVote RPC. (Melindungi shared state)"""
+        async with self.lock: # <--- PENTING: Lock ini melindungi state saat diakses oleh RPC
+            term = payload['term']
+            candidate_id = payload['candidate_id']
             
-        # 2. Jika term > current_term, update term dan kembali jadi Follower
-        if term > self.current_term:
-            await self._step_down(term)
+            # 1. Reply false jika term < current_term
+            if term < self.current_term:
+                return {'term': self.current_term, 'vote_granted': False}
+                
+            # 2. Jika term > current_term, update term dan kembali jadi Follower
+            if term > self.current_term:
+                # Perubahan state ini kini aman di dalam lock
+                await self._step_down(term) 
+                
+            # 3. Vote Logic
+            log_ok = self._log_is_at_least_up_to_date(payload['last_log_index'], payload['last_log_term'])
             
-        # 3. Vote jika belum memilih atau sudah memilih Candidate ini, DAN log-nya up-to-date
-        log_ok = self._log_is_at_least_up_to_date(payload['last_log_index'], payload['last_log_term'])
-        
-        if log_ok and (self.voted_for is None or self.voted_for == candidate_id):
-            self.voted_for = candidate_id
-            self.last_contact = time.time()
-            return {'term': self.current_term, 'vote_granted': True}
-        else:
-            return {'term': self.current_term, 'vote_granted': False}
+            if log_ok and (self.voted_for is None or self.voted_for == candidate_id):
+                self.voted_for = candidate_id
+                self.last_contact = time.time()
+                return {'term': self.current_term, 'vote_granted': True}
+            else:
+                return {'term': self.current_term, 'vote_granted': False}
 
     async def handle_append_entries(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Handler AppendEntries RPC (termasuk Heartbeat)."""
-        term = payload['term']
-        leader_id = payload['leader_id']
-
-        # 1. Reply false jika term < current_term
-        if term < self.current_term:
-            return {'term': self.current_term, 'success': False}
-            
-        # Jika menerima Heartbeat/Entries dari Leader yang valid, kembali jadi Follower
-        if term >= self.current_term:
-            if term > self.current_term:
-                 await self._step_down(term)
-            self.state = RaftState.FOLLOWER
-            self.leader_id = leader_id
-            self.last_contact = time.time() # Reset timer
-            
-        # 2. (Log Consistency Check) Reply false jika log tidak mengandung entri pada prev_log_index
-        prev_idx = payload.get('prev_log_index', 0)
-        prev_term = payload.get('prev_log_term', 0)
-
-        if prev_idx > 0 and (len(self.log) < prev_idx or self.log[prev_idx-1][0] != prev_term):
-            # Ini adalah Log Inconsistency
-            return {'term': self.current_term, 'success': False}
-
-        # 3. Append Entries
-        entries_json = payload.get('entries', [])
-        if entries_json:
-            entries = [json.loads(e) for e in entries_json]
-            
-            # Jika entri yang ada berkonflik, hapus dan tambahkan yang baru
-            start_index = prev_idx
-            for i, (entry_term, entry_command) in enumerate(entries):
-                idx = start_index + i
-                if idx < len(self.log) and self.log[idx][0] != entry_term:
-                    self.log = self.log[:idx] # Truncate konflik
-                    self.log.append((entry_term, entry_command))
-                elif idx >= len(self.log):
-                    self.log.append((entry_term, entry_command))
+        """Handler AppendEntries RPC (Heartbeat). Melindungi semua shared state."""
         
-        # 4. Commit Logic
-        leader_commit = payload['leader_commit']
-        if leader_commit > self.commit_index:
-            new_commit_index = min(leader_commit, len(self.log))
-            if new_commit_index > self.commit_index:
-                self.commit_index = new_commit_index
-                await self._apply_log() # Aplikasikan ke State Machine
+        # NOTE: Semua logika state (self.term, self.log, self.commit_index) harus berada
+        # di dalam blok 'async with self.lock' untuk mencegah race condition.
+        async with self.lock:
+            term = payload['term']
+            leader_id = payload['leader_id']
 
-        return {'term': self.current_term, 'success': True}
+            # 1. Reply false jika term < current_term
+            if term < self.current_term:
+                return {'term': self.current_term, 'success': False}
+                
+            # 2. Jika term >= current_term, update state (Stepping down/Reset timer)
+            if term >= self.current_term:
+                if term > self.current_term:
+                    await self._step_down(term)
+                self.state = RaftState.FOLLOWER
+                self.leader_id = leader_id
+                self.last_contact = time.time() # Reset timer
+            
+            # --- Bagian 3: Log Consistency Check ---
+            
+            # Ekstrak variabel yang sebelumnya menyebabkan NameError
+            prev_idx = payload.get('prev_log_index', 0)
+            prev_term = payload.get('prev_log_term', 0)
+            
+            # Rule 2: Reply false jika log tidak mengandung entri pada prev_log_index
+            if prev_idx > 0 and (len(self.log) < prev_idx or self.log[prev_idx-1][0] != prev_term):
+                return {'term': self.current_term, 'success': False}
+
+            # Append Entries (Hanya jika log konsisten)
+            entries_json = payload.get('entries', [])
+            if entries_json:
+                entries = [json.loads(e) for e in entries_json]
+                
+                # Gunakan prev_idx yang didefinisikan di atas
+                start_index = prev_idx 
+                for i, (entry_term, entry_command) in enumerate(entries):
+                    idx = start_index + i
+                    
+                    if idx < len(self.log) and self.log[idx][0] != entry_term:
+                        self.log = self.log[:idx] # Truncate konflik
+                        self.log.append((entry_term, entry_command))
+                    elif idx >= len(self.log):
+                        self.log.append((entry_term, entry_command))
+            
+            # --- Bagian 4: Commit Logic ---
+            leader_commit = payload['leader_commit']
+            if leader_commit > self.commit_index:
+                new_commit_index = min(leader_commit, len(self.log))
+                if new_commit_index > self.commit_index:
+                    self.commit_index = new_commit_index
+                    await self._apply_log() 
+
+            return {'term': self.current_term, 'success': True}
 
 # --- Utility States ---
     async def _transition_to_leader(self):

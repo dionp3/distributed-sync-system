@@ -3,7 +3,7 @@ import json
 import redis
 from enum import Enum
 from collections import OrderedDict
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from src.communication.message_passing import NodeCommunication # Asumsi impor ini benar
 
 # State Cache Coherence (MESI)
