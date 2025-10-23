@@ -1,23 +1,20 @@
-# FILE: docker/prometheus.yml
 global:
-  # Scrape metrik setiap 5 detik
   scrape_interval: 5s
   external_labels:
     monitor: 'distributed-sync-monitor'
 
 scrape_configs:
-  # --- Node Lock Manager (Raft) ---
+  # Node Lock Manager (Raft)
   - job_name: 'lock_nodes_metrics'
     static_configs:
       - targets: 
-          # Menggunakan nama service Docker
           - 'node_lock_1:8001'
           - 'node_lock_2:8002'
           - 'node_lock_3:8003'
         labels:
           component: lock_manager
           
-  # --- Node Cache Coherence (MESI) ---
+  # Node Cache Coherence (MESI)
   - job_name: 'cache_nodes_metrics'
     static_configs:
       - targets: 
@@ -27,7 +24,7 @@ scrape_configs:
         labels:
           component: cache
           
-  # --- Node Distributed Queue ---
+  # Node Distributed Queue
   - job_name: 'queue_nodes_metrics'
     static_configs:
       - targets: 

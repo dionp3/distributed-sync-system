@@ -6,8 +6,6 @@ import bisect
 import asyncio
 from typing import List, Dict, Any, Optional
 
-# --- Consistent Hashing Implementation ---
-
 VIRTUAL_NODES = 100 
 HASH_SPACE = 2**32
 
@@ -41,8 +39,6 @@ class ConsistentHashRing:
             pos = 0
             
         return self.ring[self.sorted_keys[pos]]
-
-# --- Distributed Queue Node Implementation ---
 
 class DistributedQueueNode:
     QUEUE_PREFIX = "q:"
@@ -102,11 +98,12 @@ class DistributedQueueNode:
         
         message_str = self.redis_conn.hget(meta_key, message_id)
         
-        if message_str:
+        deleted_count = self.redis_conn.hdel(meta_key, message_id)
+        
+        if deleted_count > 0 and message_str:
             pipe = self.redis_conn.pipeline()
             
-            pipe.hdel(meta_key, message_id)
-            pipe.lrem(pending_key, 1, message_str)
+            pipe.lrem(pending_key, 1, message_str) 
             
             pipe.execute()
             return {"status": "ACK_RECEIVED", "message_id": message_id}

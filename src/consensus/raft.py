@@ -165,8 +165,8 @@ class RaftNode:
             
             try:
                 command = json.loads(command_str)
-                result = self.lock_manager.apply_command(command) 
-                                
+                self.lock_manager.apply_command(command) 
+                
             except json.JSONDecodeError:
                 print(f"ERROR: Failed to decode command log at index {self.last_applied}")
             except Exception as e:

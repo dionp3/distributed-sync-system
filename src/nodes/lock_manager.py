@@ -83,7 +83,6 @@ class DistributedLockManager:
                  
                  if client_id == 'SYSTEM_TIMEOUT':
                       del self.locks[lock_name]
-                      # print(f"System Force Release Succeeded for {lock_name}")
                       return True
 
                  elif client_id in current_lock['holders']:
@@ -92,7 +91,7 @@ class DistributedLockManager:
                          del self.locks[lock_name]
                          return True
             return False
-            
+        
     async def deadlock_monitor(self):
         while True:
             if self.raft_node and self.is_leader():
@@ -100,8 +99,10 @@ class DistributedLockManager:
                 
                 for name, lock_data in list(self.locks.items()):
                     if lock_data.get('expiry', 0) < now: 
+
+                        print(f"DEADLOCK DETECTED: Lock {name} expired. Force releasing.")
+
                         release_cmd = {"type": "RELEASE", "lock_name": name, "client_id": "SYSTEM_TIMEOUT"}
                         self.raft_node.submit_command(release_cmd) 
-                        # print(f"DEADLOCK DETECTED: Lock {name} expired. Force releasing.")
                         
             await asyncio.sleep(0.5)

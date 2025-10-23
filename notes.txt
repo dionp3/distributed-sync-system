@@ -1,0 +1,352 @@
+it's just my notes 👌
+
+
+python -m venv venv 
+
+venv\Scripts\activate
+
+deactivate
+
+pip install -r requirements.txt
+
+
+
+docker compose -f docker/docker-compose.yml down
+
+docker compose -f docker/docker-compose.yml --env-file .env up --build -d
+
+docker compose -f docker/docker-compose.yml ps
+
+locust -f benchmarks/load_test_scenarios.py
+
+
+
+$env:PYTHONPATH='.' ; pytest .\tests\unit\test_cache_lru.py
+
+$env:PYTHONPATH='.' ; pytest .\tests\unit\test_consistent_hash.py
+
+$env:PYTHONPATH='.' ; pytest .\tests\unit\test_deadlock_logic.py
+
+$env:PYTHONPATH='.' ; pytest .\tests\unit\test_raft_helper.py
+
+
+$env:PYTHONPATH='.' ; pytest .\tests\integration\test_api_endpoints.py
+
+$env:PYTHONPATH='.' ; pytest .\tests\integration\test_cache_mesi.py
+
+$env:PYTHONPATH='.' ; pytest .\tests\integration\test_queue_delivery.py
+
+$env:PYTHONPATH='.' ; pytest .\tests\integration\test_raft_cluster.py
+
+
+
+# =====================================================================
+# Distributed Sync System - Full Functional Test Suite (70 Poin Core)
+# =====================================================================
+
+# --- 0. PERSIAPAN GLOBAL ---
+$Ports = 8001, 8002, 8003
+$Headers = @{"Content-Type" = "application/json"}
+$LeaderPort = $null 
+$QueuePort = 8011
+$CachePort1 = 8021
+$CachePort2 = 8022
+$CachePort3 = 8023
+$LOCK_TIMEOUT_SECS = 10
+$REDELIVERY_WAIT_SECS = 35 
+
+function Find-RaftLeader {
+    $probeBody = @{lock_name = "probe_lock"; client_id = "PowerShell_Prober"; lock_type = "exclusive"; timeout = 1.0} | ConvertTo-Json
+    
+    Write-Host "--- Probing untuk Leader Raft ---"
+    foreach ($Port in $Ports) {
+        $lockURL = "http://localhost:$Port/lock/acquire"
+        try {
+            $result = Invoke-RestMethod -Uri $lockURL -Method Post -Headers $Headers -Body $probeBody -TimeoutSec 1
+            if ($result.success -eq $True) {
+                Write-Host "✅ LEADER DITEMUKAN: Port $Port."
+                # Rilis probe lock
+                Invoke-RestMethod -Uri "http://localhost:$Port/lock/release" -Method Post -Headers $Headers -Body (@{lock_name = "probe_lock"; client_id = "PowerShell_Prober"} | ConvertTo-Json) | Out-Null
+                return $Port
+            }
+        } catch {}
+    }
+    Write-Host "⚠️ GAGAL menemukan Leader yang stabil."
+    return $null
+}
+
+# --- 0. START EXECUTION ---
+$LeaderPort = Find-RaftLeader
+if (-not $LeaderPort) { exit }
+
+Write-Host "🔑 Raft Leader Aktif di Port $LeaderPort. Memulai pengujian..."
+$lockAcquireURL = "http://localhost:$LeaderPort/lock/acquire"
+$lockReleaseURL = "http://localhost:$LeaderPort/lock/release"
+
+# =====================================================================
+# 1. UJI DISTRIBUTED LOCK MANAGER (DLM) - KONSISTENSI & DEADLOCK
+# =====================================================================
+Write-Host "`n======================= DLM (Raft) Test ========================"
+$dataA = @{lock_name="DB_RW"; client_id="ClientA"; lock_type="exclusive"; timeout=$LOCK_TIMEOUT_SECS}
+$dataB = @{lock_name="DB_RW"; client_id="ClientB"; lock_type="exclusive"; timeout=1.0}
+
+# 1.1 Acquire Lock (Client A)
+Write-Host "[1] Client A Acquire (Eksklusif)..."
+$resultA = Invoke-RestMethod -Uri $lockAcquireURL -Method Post -Headers $Headers -Body ($dataA | ConvertTo-Json)
+Write-Host "    Status Acquire A: $($resultA.success)"
+
+# 1.2 Contention (Client B)
+Write-Host "[2] Client B Contention (Harus Ditolak)..."
+$resultB = Invoke-RestMethod -Uri $lockAcquireURL -Method Post -Headers $Headers -Body ($dataB | ConvertTo-Json)
+Write-Host "    Status Acquire B: $($resultB.success)"
+
+# 1.3 Uji Deadlock Detection
+Write-Host "`n[3] Uji Deadlock: Menunggu $($LOCK_TIMEOUT_SECS + 2) detik..."
+Write-Host "    (Cek Log Node $LeaderPort untuk pesan 'DEADLOCK DETECTED')"
+Start-Sleep -Seconds ($LOCK_TIMEOUT_SECS + 2) 
+$LeaderContainer = "docker-node_lock_$($LeaderPort-8000)-1"
+$deadlockPassed = docker logs $LeaderContainer 2>&1 | Select-String "DEADLOCK DETECTED"
+
+# 1.4 Acquire Ulang (Client B) - Verifikasi Lock Dirilis
+Write-Host "[4] Client B: Acquire Ulang (Verifikasi Deadlock Release)..."
+$finalResult = Invoke-RestMethod -Uri $lockAcquireURL -Method Post -Headers $Headers -Body ($dataB | ConvertTo-Json)
+
+if ($finalResult.success -eq $True) {
+    Write-Host "✅ PASSED: Deadlock Detection BERHASIL. Lock berhasil diperoleh kembali."
+    Invoke-RestMethod -Uri $lockReleaseURL -Method Post -Headers $Headers -Body ($dataB | ConvertTo-Json) | Out-Null
+} else {
+    Write-Host "❌ FAILED: Lock masih macet setelah deteksi."
+}
+if ($deadlockPassed) { Write-Host "✅ LOG CHECK: Deadlock pesan ditemukan di log." }
+
+# =====================================================================
+# 2. UJI DISTRIBUTED QUEUE SYSTEM - AT-LEAST-ONCE DELIVERY (20 Pts)
+# =====================================================================
+Write-Host "`n======================= DQS (Queue) Test ======================="
+$topicName = "INVOICE_PROCESS"
+$urlQueuePublish = "http://localhost:$QueuePort/queue/publish"
+$urlQueueConsume = "http://localhost:$QueuePort/queue/consume"
+$urlQueueAck = "http://localhost:$QueuePort/queue/ack"
+
+# 2.1 Publish Pesan
+Write-Host "[5] Pesan dipublish..."
+Invoke-RestMethod -Uri $urlQueuePublish -Method Post -Headers $Headers -Body (@{topic=$topicName; data=@{order_id="ORD101"}} | ConvertTo-Json) | Out-Null
+
+# 2.2 Consume Pertama (Tanpa ACK)
+$msgResult = Invoke-RestMethod -Uri $urlQueueConsume -Method Post -ContentType "application/json" -Body (@{topic=$topicName} | ConvertTo-Json)
+$MessageID = $msgResult.message.id
+Write-Host "    Pesan dikonsumsi (ID: $MessageID). TIDAK ada ACK."
+
+# 2.3 Uji Redelivery
+Write-Host "⏱️ [6] Menunggu $REDELIVERY_WAIT_SECS detik untuk Redelivery Monitor..."
+Start-Sleep -Seconds $REDELIVERY_WAIT_SECS
+
+# 2.4 Consume Kedua (Verifikasi Redelivery)
+$msgResult2 = Invoke-RestMethod -Uri $urlQueueConsume -Method Post -ContentType "application/json" -Body (@{topic=$topicName} | ConvertTo-Json)
+
+if ($msgResult2.message.id -eq $MessageID) {
+    Write-Host "✅ PASSED: At-Least-Once Delivery BERHASIL (Pesan ID $MessageID di-Redeliver)."
+    # Cleanup: Kirim ACK
+    Invoke-RestMethod -Uri $urlQueueAck -Method Post -Headers $Headers -Body (@{topic=$topicName; message_id=$MessageID} | ConvertTo-Json) | Out-Null
+} else {
+    Write-Host "❌ FAILED: Redelivery Monitor tidak bekerja."
+}
+
+# =====================================================================
+# 3. UJI DISTRIBUTED CACHE COHERENCE (MESI) (15 Pts)
+# =====================================================================
+Write-Host "`n====================== DCC (MESI) Test ======================="
+$CacheKey = "USER_CONFIG_FILE"
+
+# 3.1 Node 1: WRITE (I -> M) - Menulis Versi 1
+Write-Host "[7] Node ${CachePort1}: WRITE (I -> M) dan Broadcasting INVAL..."
+Invoke-RestMethod -Uri "http://localhost:$CachePort1/cache/write" -Method Post -Headers $Headers -Body (@{key=$CacheKey; value="Version_1"} | ConvertTo-Json) | Out-Null
+
+# 3.2 Node 2: READ (I -> S) - Mendapatkan salinan Shared
+Write-Host "[8] Node ${CachePort2}: READ (I -> S)..."
+Invoke-RestMethod -Uri "http://localhost:$CachePort2/cache/read" -Method Post -Headers $Headers -Body (@{key=$CacheKey} | ConvertTo-Json) | Out-Null
+Write-Host "    (Node 8022 sekarang memegang state Shared)"
+
+# 3.3 Node 3: WRITE (Memicu Invalidasi) - Menulis Versi 2
+Write-Host "[9] Node ${CachePort3}: WRITE (Memicu INVAL ke peer)..."
+Invoke-RestMethod -Uri "http://localhost:$CachePort3/cache/write" -Method Post -Headers $Headers -Body (@{key=$CacheKey; value="Version_2_Final"} | ConvertTo-Json) | Out-Null
+Start-Sleep -Seconds 1.5 # Beri waktu RPC untuk propagasi
+
+# 3.4 Verifikasi Invalidation pada Node 2 (Log Check)
+Write-Host "[10] Verifikasi: Cek Log Node ${CachePort2} untuk pesan INVAL..."
+$CacheContainerB = "docker-node_cache_2-1"
+$invalPassed = docker logs $CacheContainerB 2>&1 | Select-String "Received INVAL for $CacheKey. State -> I"
+
+if ($invalPassed) {
+    Write-Host "✅ PASSED: MESI Invalidation BERHASIL. Node B mengubah state ke Invalid."
+} else {
+    Write-Host "❌ FAILED: Node B gagal memproses INVAL."
+}
+
+# =====================================================================
+# 4. FINAL STATUS
+# =====================================================================
+Write-Host "`n========================================================"
+Write-Host "✅ PENGUJIAN FUNGSIONALITAS INTI SELESAI. SIAP UNTUK PERFORMANCE TEST."
+Write-Host "========================================================"
+
+
+
+python .\tests\test_e2e_functionality.py
+
+
+# =====================================================================
+# 1. PERSIAPAN GLOBAL DAN IDENTIFIKASI LEADER RAFT
+#    Tujuan: Menemukan Leader Raft yang aktif dan menyimpan portnya.
+# =====================================================================
+
+# Definisikan variabel global dan headers
+$Ports = 8001, 8002, 8003
+$headers = @{"Content-Type" = "application/json"}
+$LeaderPort = $null 
+$probeBody = @{lock_name = "probe_lock"; client_id = "PowerShell_Prober"; lock_type = "exclusive"} | ConvertTo-Json
+
+Write-Host "--- Memulai Probing untuk Leader Raft (Ports: 8001, 8002, 8003) ---"
+
+# Loop Probing untuk menemukan Leader
+foreach ($Port in $Ports) {
+    $lockURL = "http://localhost:$Port/lock/acquire"
+    try {
+        $result = Invoke-RestMethod -Uri $lockURL -Method Post -Headers $headers -Body $probeBody
+        
+        if ($result.success -eq $True) {
+            Write-Host "✅ LEADER DITEMUKAN: Node pada port $Port."
+            
+            # Rilis lock probe
+            $releaseURL = "http://localhost:$Port/lock/release"
+            Invoke-RestMethod -Uri $releaseURL -Method Post -Headers $headers -Body (@{lock_name = "probe_lock"; client_id = "PowerShell_Prober"} | ConvertTo-Json) | Out-Null
+            
+            $LeaderPort = $Port
+            break
+        } elseif ($result.error -eq "NOT_LEADER") {
+            Write-Host "❌ FOLLOWERS/CANDIDATE: Node $Port bukan Leader."
+        }
+    } catch {
+        Write-Host "🛑 ERROR JARINGAN: Koneksi gagal ke port $Port. (Mungkin Node Crash)"
+    }
+}
+Write-Host "---------------------------------------------------------"
+if ($LeaderPort) {
+    Write-Host "🔑 Raft Leader Aktif di Port $LeaderPort. Memulai pengujian DLM..."
+} else {
+    Write-Host "⚠️ GAGAL menemukan Leader. Raft klaster tidak stabil."
+    exit
+}
+
+
+# =====================================================================
+# 2. UJI DISTRIBUTED LOCK MANAGER (DLM) - KONSISTENSI DAN DEADLOCK
+#    Tujuan: Verifikasi acquire, contention, dan Deadlock Detection.
+# =====================================================================
+
+$lockAcquireURL = "http://localhost:$LeaderPort/lock/acquire"
+$lockReleaseURL = "http://localhost:$LeaderPort/lock/release"
+$dataA = @{lock_name="DB_RW"; client_id="ClientA"; lock_type="exclusive"; timeout=10.0}
+$dataB = @{lock_name="DB_RW"; client_id="ClientB"; lock_type="exclusive"; timeout=10.0}
+
+# --- 2.1. Acquire Lock (Client A) ---
+Write-Host "`n[1] Client A: Mengakuisisi Lock..."
+$resultA = irm -Uri $lockAcquireURL -Method Post -Headers $headers -Body ($dataA | ConvertTo-Json)
+Write-Host "    Status Acquire A: $($resultA.success)"
+
+# --- 2.2. Contention (Client B) ---
+Write-Host "[2] Client B: Menguji Contention (Harus Ditolak)..."
+$resultB = irm -Uri $lockAcquireURL -Method Post -Headers $headers -Body ($dataB | ConvertTo-Json)
+Write-Host "    Status Acquire B: $($resultB.success)"
+
+# --- 2.3. Uji Deadlock Detection ---
+Write-Host "`n[3] Uji Deadlock: Menunggu 12 detik (Lock Timeout = 10s)..."
+Write-Host "    (Cek Log Node $LeaderPort untuk pesan 'DEADLOCK DETECTED')"
+Start-Sleep -Seconds 12 
+
+# --- 2.4. Acquire Ulang (Client B) ---
+Write-Host "[4] Client B: Acquire Ulang (Harus Berhasil Setelah Deteksi)..."
+$finalResult = irm -Uri $lockAcquireURL -Method Post -Headers $headers -Body ($dataB | ConvertTo-Json)
+
+if ($finalResult.success -eq $True) {
+    Write-Host "✅ PASSED: Deadlock Detection BERHASIL. Lock berhasil didapat oleh Client B."
+    # Cleanup Final
+    irm -Uri $lockReleaseURL -Method Post -Headers $headers -Body ($dataB | ConvertTo-Json) | Out-Null
+} else {
+    Write-Host "❌ FAILED: Lock masih macet atau Leader Crash."
+}
+
+
+# =====================================================================
+# 3. UJI DISTRIBUTED QUEUE SYSTEM - AT-LEAST-ONCE DELIVERY
+#    Tujuan: Membuktikan Redelivery Monitor mengembalikan pesan yang macet.
+# =====================================================================
+
+$QueuePort = 8011
+$topicName = "INVOICE_PROCESS"
+$urlQueuePublish = "http://localhost:$QueuePort/queue/publish"
+$urlQueueConsume = "http://localhost:$QueuePort/queue/consume"
+
+# --- 3.1. Publish Pesan ---
+irm -Uri $urlQueuePublish -Method Post -Headers $headers -Body (@{topic=$topicName; data=@{order_id="ORD101"}} | ConvertTo-Json) | Out-Null
+Write-Host "`n[5] Pesan dipublish ke Port $QueuePort."
+
+# --- 3.2. Consume Pertama (Pindah ke Pending) ---
+$msgResult = Invoke-RestMethod -Uri $urlQueueConsume -Method Post -ContentType "application/json" -Body (@{topic=$topicName} | ConvertTo-Json)
+$MessageID = $msgResult.message.id
+Write-Host "    Pesan dikonsumsi (ID: $MessageID). TIDAK ada ACK."
+
+# --- 3.3. Uji Redelivery ---
+Write-Host "⏱️ Menunggu 35 detik untuk Redelivery Monitor (Timeout 30s)..."
+Start-Sleep -Seconds 35
+
+# --- 3.4. Consume Kedua ---
+Write-Host "[6] Consume Kedua (Harus Menerima Pesan yang Sama)..."
+$msgResult2 = Invoke-RestMethod -Uri $urlQueueConsume -Method Post -ContentType "application/json" -Body (@{topic=$topicName} | ConvertTo-Json)
+
+if ($msgResult2.message.id -eq $MessageID) {
+    Write-Host "✅ PASSED: At-Least-Once Delivery BERHASIL (Pesan ID $MessageID di-Redeliver)."
+    # Cleanup: Kirim ACK pada pesan yang telah dikembalikan
+    $urlQueueAck = "http://localhost:$QueuePort/queue/ack"
+    irm -Uri $urlQueueAck -Method Post -Headers $headers -Body (@{topic=$topicName; message_id=$MessageID} | ConvertTo-Json) | Out-Null
+} else {
+    Write-Host "❌ FAILED: Redelivery Monitor tidak bekerja atau pesan hilang."
+}
+
+
+# =====================================================================
+# 4. UJI DISTRIBUTED CACHE COHERENCE (MESI)
+#    Tujuan: Memvalidasi implementasi Protokol Koherensi MESI dan kebijakan LRU dalam klaster Cache Node.
+# =====================================================================
+
+$CachePort1 = 8021
+$CachePort2 = 8022
+$CachePort3 = 8023
+$CacheKey = "USER_PROFILE_1"
+$Headers = @{"Content-Type" = "application/json"} # Pastikan $Headers didefinisikan
+
+# --- 4.1. Node 1: WRITE (I -> M) ---
+# PERBAIKAN: Gunakan ${CachePort1} untuk menghindari error parsing.
+Write-Host "`n[7] Node ${CachePort1}: WRITE (I -> M) dan Broadcasting INVAL..."
+$writeBody1 = @{key=$CacheKey; value="Version_1"} | ConvertTo-Json
+irm -Uri http://localhost:$CachePort1/cache/write -Method Post -Headers $Headers -Body $writeBody1 | Out-Null
+
+# --- 4.2. Node 2: READ (I -> S) ---
+Write-Host "[8] Node ${CachePort2}: READ (I -> S)..."
+$readResult2 = irm -Uri http://localhost:$CachePort2/cache/read -Method Post -Headers $Headers -Body (@{key=$CacheKey} | ConvertTo-Json)
+Write-Host "    Status Read: $($readResult2.status)"
+
+# --- 4.3. Node 3: WRITE (Memicu Invalidasi) ---
+Write-Host "[9] Node ${CachePort3}: WRITE (Memicu INVAL ke peer)..."
+$writeBody3 = @{key=$CacheKey; value="Version_2_New"} | ConvertTo-Json
+irm -Uri http://localhost:$CachePort3/cache/write -Method Post -Headers $Headers -Body $writeBody3 | Out-Null
+
+# --- 4.4. Verifikasi Invalidation pada Node 2 ---
+Write-Host "[10] Verifikasi: Cek Log Node ${CachePort2} untuk pesan INVAL..."
+Write-Host "    (Harus ditemukan: 'Received INVAL for $CacheKey. State -> I')"
+# PERBAIKAN: Gunakan sintaks $() untuk memasukkan variabel ke string dan menghindari error
+docker logs docker-node_cache_2-1 | Select-String "Received INVAL for $($CacheKey)"
+
+Write-Host "`n========================================================"
+Write-Host "✅ PENGUJIAN FUNGSIONALITAS INTI SELESAI. SIAP UNTUK PERFORMANCE TEST."
+Write-Host "========================================================"

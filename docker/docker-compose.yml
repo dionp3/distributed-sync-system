@@ -1,7 +1,6 @@
 version: '3.8'
 
 services:
-  # State Store dan Memori Utama
   redis:
     image: redis:6-alpine
     container_name: redis_state
@@ -9,7 +8,7 @@ services:
       - "6379:6379"
     restart: always
 
-  # --- Distributed Lock Manager (Raft) ---
+  # Distributed Lock Manager (Raft)
   node_lock_1: &raft_node_template
     build:
       context: ../
@@ -46,7 +45,7 @@ services:
       - "8003:8003"
     depends_on: [redis]
 
-  # --- Distributed Queue System (Consistent Hashing) ---
+  # Distributed Queue System (Consistent Hashing)
   node_queue_1: &queue_node_template
     build:
       context: ../
@@ -83,7 +82,7 @@ services:
       - "8013:8013"
     depends_on: [redis]
 
-  # --- Distributed Cache Coherence (MESI/LRU) ---
+  # Distributed Cache Coherence (MESI/LRU)
   node_cache_1: &cache_node_template
     build:
       context: ../
@@ -123,7 +122,7 @@ services:
       - "8023:8023"
     depends_on: [redis]
     
-  # --- Monitoring ---
+  # Monitoring
   prometheus:
     image: prom/prometheus
     container_name: prometheus
