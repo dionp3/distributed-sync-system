@@ -1,0 +1,18 @@
+global:
+  scrape_interval: 5s
+  external_labels:
+    monitor: 'distributed-sync-monitor'
+
+scrape_configs:
+  - job_name: 'cache_nodes_metrics'
+    static_configs:
+      - targets: ['node_cache_1:8021', 'node_cache_2:8022', 'node_cache_3:8023']
+        labels:
+          component: cache
+          
+  - job_name: 'lock_nodes_metrics'
+    # Node lock juga harus mengekspos endpoint /metrics (implementasi di main.py)
+    static_configs:
+      - targets: ['node_lock_1:8001', 'node_lock_2:8002', 'node_lock_3:8003']
+        labels:
+          component: lock_manager

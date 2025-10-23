@@ -1,0 +1,151 @@
+version: '3.8'
+
+services:
+  # State Store dan Memori Utama
+  redis:
+    image: redis:6-alpine
+    container_name: redis_state
+    ports:
+      - "6379:6379"
+    restart: always
+
+  # --- Distributed Lock Manager (Raft) ---
+  node_lock_1: &raft_node_template
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile.node
+    command: python main.py
+    environment:
+      NODE_TYPE: lock
+      NODE_ID: node_lock_1
+      REDIS_HOST: ${REDIS_HOST}
+      RAFT_PEERS: ${RAFT_PEERS}
+    ports:
+      - "8001:8001"
+    depends_on: [redis]
+
+  node_lock_2:
+    <<: *raft_node_template
+    environment:
+      NODE_TYPE: lock
+      NODE_ID: node_lock_2
+      REDIS_HOST: ${REDIS_HOST}
+      RAFT_PEERS: ${RAFT_PEERS}
+    ports:
+      - "8002:8002"
+    depends_on: [redis]
+
+  node_lock_3:
+    <<: *raft_node_template
+    environment:
+      NODE_TYPE: lock
+      NODE_ID: node_lock_3
+      REDIS_HOST: ${REDIS_HOST}
+      RAFT_PEERS: ${RAFT_PEERS}
+    ports:
+      - "8003:8003"
+    depends_on: [redis]
+
+  # --- Distributed Queue System (Consistent Hashing) ---
+  node_queue_1: &queue_node_template
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile.node
+    command: python main.py
+    environment:
+      NODE_TYPE: queue
+      NODE_ID: node_queue_1
+      REDIS_HOST: ${REDIS_HOST}
+      QUEUE_NODES: ${QUEUE_NODES}
+    ports:
+      - "8011:8011"
+    depends_on: [redis]
+
+  node_queue_2:
+    <<: *queue_node_template
+    environment:
+      NODE_TYPE: queue
+      NODE_ID: node_queue_2
+      REDIS_HOST: ${REDIS_HOST}
+      QUEUE_NODES: ${QUEUE_NODES}
+    ports:
+      - "8012:8012"
+    depends_on: [redis]
+
+  node_queue_3:
+    <<: *queue_node_template
+    environment:
+      NODE_TYPE: queue
+      NODE_ID: node_queue_3
+      REDIS_HOST: ${REDIS_HOST}
+      QUEUE_NODES: ${QUEUE_NODES}
+    ports:
+      - "8013:8013"
+    depends_on: [redis]
+
+  # --- Distributed Cache Coherence (MESI/LRU) ---
+  node_cache_1: &cache_node_template
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile.node
+    command: python main.py
+    environment:
+      NODE_TYPE: cache
+      NODE_ID: node_cache_1
+      REDIS_HOST: ${REDIS_HOST}
+      CACHE_PEERS: ${CACHE_PEERS}
+      CACHE_MAX_SIZE: ${CACHE_MAX_SIZE}
+    ports:
+      - "8021:8021"
+    depends_on: [redis]
+      
+  node_cache_2:
+    <<: *cache_node_template
+    environment:
+      NODE_TYPE: cache
+      NODE_ID: node_cache_2
+      REDIS_HOST: ${REDIS_HOST}
+      CACHE_PEERS: ${CACHE_PEERS}
+      CACHE_MAX_SIZE: ${CACHE_MAX_SIZE}
+    ports:
+      - "8022:8022"
+    depends_on: [redis]
+
+  node_cache_3:
+    <<: *cache_node_template
+    environment:
+      NODE_TYPE: cache
+      NODE_ID: node_cache_3
+      REDIS_HOST: ${REDIS_HOST}
+      CACHE_PEERS: ${CACHE_PEERS}
+      CACHE_MAX_SIZE: ${CACHE_MAX_SIZE}
+    ports:
+      - "8023:8023"
+    depends_on: [redis]
+    
+  # --- Monitoring ---
+  prometheus:
+    image: prom/prometheus
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+    depends_on: [node_lock_1, node_queue_1, node_cache_1]
+    
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana-storage:/var/lib/grafana
+    depends_on: [prometheus]
+
+volumes:
+  grafana-storage:
