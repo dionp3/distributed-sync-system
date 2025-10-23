@@ -1,10 +1,6 @@
-Tentu, setelah menyelesaikan implementasi *Core Requirements* dan berhasil menstabilkan sistem, *file* **`README.md`** ini akan menjadi halaman utama GitHub Anda, merangkum proyek secara profesional dan memberikan panduan *deployment* yang jelas.
-
------
-
 # 🚀 Distributed Sync System (DSS)
 
-Sistem ini mensimulasikan arsitektur *distributed systems* modern yang kompleks, berfokus pada **sinkronisasi data yang konsisten**, *fault tolerance*, dan skalabilitas. DSS mengimplementasikan tiga mekanisme konsensus/koherensi yang vital—**Raft Consensus**, **Consistent Hashing**, dan **MESI Cache Coherence**—semuanya di-orkestrasi menggunakan Docker Compose.
+Sistem ini mensimulasikan arsitektur *distributed systems* modern, berfokus pada **sinkronisasi data yang konsisten**, *fault tolerance*, dan skalabilitas. DSS mengimplementasikan tiga mekanisme konsensus/koherensi yaitu **Raft Consensus**, **Consistent Hashing**, dan **MESI Cache Coherence**, semuanya dengan menggunakan Docker Compose.
 
 [](https://opensource.org/licenses/MIT) [](https://www.python.org/) [](https://www.docker.com/)
 
@@ -12,7 +8,7 @@ Sistem ini mensimulasikan arsitektur *distributed systems* modern yang kompleks,
 
 ## Fitur Inti yang Diimplementasikan
 
-Proyek ini telah menyelesaikan semua *Core Requirements* (70 poin) dengan fokus pada ketahanan di bawah kegagalan.
+Proyek ini telah menyelesaikan semua *Core Requirements* dengan fokus pada ketahanan di bawah kegagalan.
 
 ### 🔑 1. Distributed Lock Manager (DLM)
 
@@ -50,7 +46,7 @@ Proyek ini telah menyelesaikan semua *Core Requirements* (70 poin) dengan fokus 
 1.  **Kloning Repository:**
 
     ```bash
-    git clone [LINK_REPO_ANDA]
+    git clone 
     cd distributed-sync-system
     ```
 

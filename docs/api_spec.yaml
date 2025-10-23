@@ -1,0 +1,222 @@
+openapi: 3.0.3
+info:
+  title: Distributed Sync System (DSS) API
+  description: |
+    API untuk sistem sinkronisasi terdistribusi yang mengimplementasikan Raft Consensus untuk locking, Consistent Hashing untuk messaging, dan MESI untuk cache coherence.
+  version: 1.0.0
+servers:
+  - url: http://localhost:8001
+    description: Default Lock Manager/Raft Node Port
+  - url: http://localhost:8011
+    description: Default Queue System Node Port
+  - url: http://localhost:8021
+    description: Default Cache Node Port
+
+tags:
+  - name: Distributed Lock Manager (DLM)
+    description: Operasi Lock berbasis Raft Consensus (Konsistensi Kuat)
+  - name: Distributed Queue System (DQS)
+    description: Operasi Messaging dengan At-Least-Once Delivery
+  - name: Distributed Cache Coherence (DCC)
+    description: Operasi Cache dengan protokol MESI/LRU
+
+paths:
+  # =====================================================================
+  # DISTRIBUTED LOCK MANAGER (DLM)
+  # =====================================================================
+  /lock/acquire:
+    post:
+      tags:
+        - Distributed Lock Manager (DLM)
+      summary: Mengakuisisi Lock (Exclusive atau Shared)
+      description: Permintaan ini hanya diproses oleh Raft Leader. Jika berhasil, lock dicatat dalam log terdistribusi.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - lock_name
+                - client_id
+              properties:
+                lock_name: {type: string, example: DB_RW_CONFIG}
+                client_id: {type: string, example: ClientA_123}
+                lock_type: {type: string, enum: [exclusive, shared], default: exclusive}
+                timeout: {type: number, format: float, default: 10.0, description: Batas waktu lock sebelum dianggap deadlock.}
+      responses:
+        '200':
+          description: Lock berhasil diperoleh atau ditolak (Contention).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: {type: boolean, example: true}
+                  message: {type: string, example: exclusive lock acquired}
+        '307':
+          description: Redirection ke Raft Leader yang benar.
+  
+  /lock/release:
+    post:
+      tags:
+        - Distributed Lock Manager (DLM)
+      summary: Melepaskan Lock
+      description: Merilis lock yang sedang dipegang oleh client_id.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - lock_name
+                - client_id
+              properties:
+                lock_name: {type: string, example: DB_RW_CONFIG}
+                client_id: {type: string, example: ClientA_123}
+      responses:
+        '200':
+          description: Command release berhasil disubmit ke Leader.
+  
+  # RPC Internal Raft (Untuk Validasi)
+  /raft/request_vote:
+    post:
+      tags:
+        - Distributed Lock Manager (DLM)
+      summary: RPC Internal - Request Vote
+      description: Digunakan oleh Candidate untuk meminta suara dari peer (Validasi Leader Election).
+      responses:
+        '200': {description: Response Raft Vote Granted/Denied}
+
+  # =====================================================================
+  # DISTRIBUTED QUEUE SYSTEM (DQS)
+  # =====================================================================
+  /queue/publish:
+    post:
+      tags:
+        - Distributed Queue System (DQS)
+      summary: Mempublikasikan pesan ke Topic (Consistent Hashing)
+      description: Pesan akan dirutekan ke Queue Node yang bertanggung jawab berdasarkan topik.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - topic
+                - data
+              properties:
+                topic: {type: string, example: INVOICE_PROCESS}
+                data: {type: object, description: Payload data pesan.}
+      responses:
+        '200': {description: Pesan berhasil dipublikasikan atau di-redirect.}
+
+  /queue/consume:
+    post:
+      tags:
+        - Distributed Queue System (DQS)
+      summary: Mengkonsumsi pesan dari Topic (At-Least-Once)
+      description: Mengambil pesan dari antrian utama dan memindahkannya ke Pending Queue.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - topic
+              properties:
+                topic: {type: string, example: INVOICE_PROCESS}
+      responses:
+        '200': {description: Pesan terkirim atau antrian kosong.}
+
+  /queue/ack:
+    post:
+      tags:
+        - Distributed Queue System (DQS)
+      summary: Mengkonfirmasi pemrosesan pesan
+      description: Menghapus pesan dari Pending Queue setelah pemrosesan sukses.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - topic
+                - message_id
+              properties:
+                topic: {type: string, example: INVOICE_PROCESS}
+                message_id: {type: string, example: a1b2c3d4e5}
+      responses:
+        '200': {description: ACK diterima dan pesan dihapus.}
+
+  # =====================================================================
+  # DISTRIBUTED CACHE COHERENCE (DCC)
+  # =====================================================================
+  /cache/read:
+    post:
+      tags:
+        - Distributed Cache Coherence (DCC)
+      summary: Membaca data dari Cache
+      description: Memicu Cache Hit/Miss dan transisi state MESI (I, E, S, M).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - key
+              properties:
+                key: {type: string, example: USER_PROFILE_1}
+      responses:
+        '200': {description: Data dikembalikan, status HIT/MISS/NOT_FOUND.}
+
+  /cache/write:
+    post:
+      tags:
+        - Distributed Cache Coherence (DCC)
+      summary: Menulis data ke Cache
+      description: Memicu transisi state dan Invalidasi ke peer nodes jika statusnya Shared.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - key
+                - value
+              properties:
+                key: {type: string, example: USER_PROFILE_1}
+                value: {type: string, example: Version_2_Final}
+      responses:
+        '200': {description: Status Write (HIT/MISS, Invalidasi). }
+        
+  /cache/invalidate:
+    post:
+      tags:
+        - Distributed Cache Coherence (DCC)
+      summary: RPC Internal - Invalidasi Cache Line
+      description: Digunakan oleh peer untuk memberi tahu node lain agar mengubah state ke Invalid.
+      responses:
+        '200': {description: Pesan Invalidasi diterima.}
+
+  # =====================================================================
+  # MONITORING
+  # =====================================================================
+  /metrics:
+    get:
+      tags:
+        - Monitoring
+      summary: Mengambil metrik kinerja (Prometheus Format)
+      description: Digunakan oleh Prometheus untuk scrape data kinerja node (Raft state, hit rates, dll.).
+      responses:
+        '200':
+          description: Data metrik dalam format Prometheus text/plain.
+          content:
+            text/plain:
+              schema: {type: string}

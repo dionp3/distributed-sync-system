@@ -1,5 +1,3 @@
-# FILE: src/utils/metrics.py
-
 from typing import Dict, Any
 
 def format_prometheus_metrics(metrics_dict: Dict[str, Any]) -> str:

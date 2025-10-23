@@ -17,6 +17,8 @@ docker compose -f docker/docker-compose.yml --env-file .env up --build -d
 
 docker compose -f docker/docker-compose.yml ps
 
+
+
 locust -f benchmarks/load_test_scenarios.py
 
 
