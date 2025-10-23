@@ -156,12 +156,21 @@ class RaftNode:
     async def _apply_log(self):
         while self.last_applied < self.commit_index:
             self.last_applied += 1
-            term, command_str = self.log[self.last_applied - 1]
+            
+            log_entry_index = self.last_applied - 1
+            if log_entry_index >= len(self.log):
+                 break 
+                 
+            term, command_str = self.log[log_entry_index]
+            
             try:
                 command = json.loads(command_str)
-                self.lock_manager.apply_command(command) 
+                result = self.lock_manager.apply_command(command) 
+                                
+            except json.JSONDecodeError:
+                print(f"ERROR: Failed to decode command log at index {self.last_applied}")
             except Exception as e:
-                print(f"Error applying command: {e}")
+                print(f"FATAL STATE MACHINE ERROR at {self.last_applied}: {e}")
                 
     def _log_is_at_least_up_to_date(self, candidate_last_index: int, candidate_last_term: int) -> bool:
         last_log_index = len(self.log)

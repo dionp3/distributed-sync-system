@@ -1,7 +1,7 @@
 import time
 import json
 import redis
-import asyncio # Diperlukan jika ada logic yang menggunakan asyncio.sleep di masa depan
+import asyncio 
 from enum import Enum
 from collections import OrderedDict
 from typing import Dict, Any, List, Optional
