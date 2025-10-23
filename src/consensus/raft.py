@@ -16,16 +16,15 @@ class RaftNode:
         self.node_id = node_id
         self.peers = peers
         self.comm = comm
-        self.lock_manager = lock_manager # Referensi ke State Machine
+        self.lock_manager = lock_manager
         self.state = RaftState.FOLLOWER
         self.current_term = 0
         self.voted_for: Optional[str] = None
-        self.log: List[Tuple[int, str]] = [] # (term, command_json_str)
+        self.log: List[Tuple[int, str]] = []
         self.commit_index = 0
         self.last_applied = 0
         self.leader_id: Optional[str] = None
         
-        # Leader Volatile State
         self.next_index: Dict[str, int] = {p: 1 for p in peers}
         self.match_index: Dict[str, int] = {p: 0 for p in peers}
         
@@ -36,13 +35,10 @@ class RaftNode:
         self.last_contact = time.time()
         self.lock = asyncio.Lock()
         
-    # --- Raft Core Logic (Disederhanakan untuk brevity, fokus pada alur) ---
-
     def _get_random_timeout(self) -> float:
         return random.uniform(self.election_timeout_min, self.election_timeout_max)
         
     async def start(self):
-        """Memulai loop utama Raft."""
         while True:
             if self.state == RaftState.FOLLOWER and time.time() - self.last_contact > self.election_timeout:
                 await self._transition_to_candidate()
@@ -63,7 +59,6 @@ class RaftNode:
         print(f"Node {self.node_id}: Starting election for term {self.current_term}")
 
     async def _run_election(self):
-        """Logika untuk state Candidate: Memulai dan mengelola pemilihan."""
         self.current_term += 1
         self.voted_for = self.node_id
         votes_received = 1
@@ -81,15 +76,12 @@ class RaftNode:
             'last_log_term': last_log_term
         }
         
-        # Kirim RequestVote RPC ke semua peer
         results = await self.comm.broadcast_rpc('/raft/request_vote', payload)
         
         for peer_id, result in results.items():
-            # Handle kegagalan RPC
             if not isinstance(result, dict) or result.get('error'):
                 continue
                 
-            # Rule 1: Jika Leader/Candidate lain memiliki term yang lebih tinggi
             if result.get('term', 0) > self.current_term:
                 await self._step_down(result['term'])
                 return
@@ -97,27 +89,22 @@ class RaftNode:
             if result.get('vote_granted'):
                 votes_received += 1
         
-        # Rule 2: Jika mendapat suara dari mayoritas (N/2 + 1)
         if votes_received >= len(self.peers) // 2 + 1:
             await self._transition_to_leader()
             return
             
-        # Jika tidak ada mayoritas, tunggu election timeout berikutnya
         await asyncio.sleep(self.election_timeout)
 
     async def _leader_loop(self):
-        """Logika Heartbeat dan Replikasi Log (AppendEntries)."""
         tasks = []
         
         for peer_id in self.peers:
             if peer_id == self.node_id:
                 continue
             
-            # Tentukan log entries yang akan dikirim (Heartbeat jika entries kosong)
             next_idx = self.next_index.get(peer_id, 1)
             prev_log_index = next_idx - 1
             
-            # Dapatkan term dari log sebelumnya
             prev_log_term = self.log[prev_log_index - 1][0] if prev_log_index > 0 else 0
             
             entries_to_send = self.log[prev_log_index:]
@@ -145,27 +132,20 @@ class RaftNode:
                 return
             
             if result.get('success'):
-                # Update matchIndex dan nextIndex
                 new_match_index = prev_log_index + len(entries_to_send)
                 self.match_index[peer_id] = new_match_index
                 self.next_index[peer_id] = new_match_index + 1
             else:
-                # Log Inconsistency: Turunkan nextIndex dan coba lagi
                 self.next_index[peer_id] = max(1, self.next_index[peer_id] - 1)
         
         await self._check_for_new_commits()
         await asyncio.sleep(self.heartbeat_interval)
 
     async def _check_for_new_commits(self):
-        """Mengecek index log tertinggi yang direplikasi di mayoritas."""
-        
-        # Gabungkan matchIndex Leader (len(log)) dengan Follower
         indices = sorted([self.match_index.get(p, 0) for p in self.peers] + [len(self.log)], reverse=True)
         
-        # N: Index di posisi median (mayoritas: N/2 + 1)
         N = indices[len(self.peers) // 2]
         
-        # Commit Rule: Commit jika log N sudah direplikasi di mayoritas DAN log N berasal dari current_term
         if N > self.commit_index and N > 0:
             log_term_at_N = self.log[N - 1][0]
             if log_term_at_N == self.current_term:
@@ -173,27 +153,17 @@ class RaftNode:
                 await self._apply_log()
                 print(f"Node {self.node_id} (Leader): Commit Index updated to {self.commit_index}")
     
-    # --- State Machine Integration ---
     async def _apply_log(self):
-        """Menerapkan command baru ke State Machine (Lock Manager)."""
         while self.last_applied < self.commit_index:
             self.last_applied += 1
             term, command_str = self.log[self.last_applied - 1]
             try:
                 command = json.loads(command_str)
-                # Panggil logika apply_command pada Lock Manager
                 self.lock_manager.apply_command(command) 
-                # (Di Lock Manager, pastikan logika menunggu hasilnya)
             except Exception as e:
                 print(f"Error applying command: {e}")
                 
-    # --- RPC Handlers ---
-    # Implementasikan handle_request_vote dan handle_append_entries sepenuhnya
-    # Pastikan untuk mereset last_contact dan mengubah state menjadi FOLLOWER jika term Leader lebih tinggi.
-    # ...
-
     def _log_is_at_least_up_to_date(self, candidate_last_index: int, candidate_last_term: int) -> bool:
-        """Helper untuk Rule 2 RequestVote."""
         last_log_index = len(self.log)
         last_log_term = self.log[-1][0] if self.log else 0
         
@@ -202,7 +172,6 @@ class RaftNode:
         return candidate_last_index >= last_log_index
 
     async def _step_down(self, new_term: int):
-        """Membuat node kembali ke Follower."""
         self.current_term = new_term
         self.state = RaftState.FOLLOWER
         self.voted_for = None
@@ -211,21 +180,16 @@ class RaftNode:
         print(f"Node {self.node_id}: Stepping down to Follower, term {new_term}")
     
     async def handle_request_vote(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Handler RequestVote RPC. (Melindungi shared state)"""
-        async with self.lock: # <--- PENTING: Lock ini melindungi state saat diakses oleh RPC
+        async with self.lock:
             term = payload['term']
             candidate_id = payload['candidate_id']
             
-            # 1. Reply false jika term < current_term
             if term < self.current_term:
                 return {'term': self.current_term, 'vote_granted': False}
                 
-            # 2. Jika term > current_term, update term dan kembali jadi Follower
             if term > self.current_term:
-                # Perubahan state ini kini aman di dalam lock
                 await self._step_down(term) 
                 
-            # 3. Vote Logic
             log_ok = self._log_is_at_least_up_to_date(payload['last_log_index'], payload['last_log_term'])
             
             if log_ok and (self.voted_for is None or self.voted_for == candidate_id):
@@ -236,53 +200,40 @@ class RaftNode:
                 return {'term': self.current_term, 'vote_granted': False}
 
     async def handle_append_entries(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Handler AppendEntries RPC (Heartbeat). Melindungi semua shared state."""
-        
-        # NOTE: Semua logika state (self.term, self.log, self.commit_index) harus berada
-        # di dalam blok 'async with self.lock' untuk mencegah race condition.
         async with self.lock:
             term = payload['term']
             leader_id = payload['leader_id']
 
-            # 1. Reply false jika term < current_term
             if term < self.current_term:
                 return {'term': self.current_term, 'success': False}
                 
-            # 2. Jika term >= current_term, update state (Stepping down/Reset timer)
             if term >= self.current_term:
                 if term > self.current_term:
                     await self._step_down(term)
                 self.state = RaftState.FOLLOWER
                 self.leader_id = leader_id
-                self.last_contact = time.time() # Reset timer
+                self.last_contact = time.time()
             
-            # --- Bagian 3: Log Consistency Check ---
-            
-            # Ekstrak variabel yang sebelumnya menyebabkan NameError
             prev_idx = payload.get('prev_log_index', 0)
             prev_term = payload.get('prev_log_term', 0)
             
-            # Rule 2: Reply false jika log tidak mengandung entri pada prev_log_index
             if prev_idx > 0 and (len(self.log) < prev_idx or self.log[prev_idx-1][0] != prev_term):
                 return {'term': self.current_term, 'success': False}
 
-            # Append Entries (Hanya jika log konsisten)
             entries_json = payload.get('entries', [])
             if entries_json:
                 entries = [json.loads(e) for e in entries_json]
                 
-                # Gunakan prev_idx yang didefinisikan di atas
                 start_index = prev_idx 
                 for i, (entry_term, entry_command) in enumerate(entries):
                     idx = start_index + i
                     
                     if idx < len(self.log) and self.log[idx][0] != entry_term:
-                        self.log = self.log[:idx] # Truncate konflik
+                        self.log = self.log[:idx]
                         self.log.append((entry_term, entry_command))
                     elif idx >= len(self.log):
                         self.log.append((entry_term, entry_command))
             
-            # --- Bagian 4: Commit Logic ---
             leader_commit = payload['leader_commit']
             if leader_commit > self.commit_index:
                 new_commit_index = min(leader_commit, len(self.log))
@@ -292,26 +243,19 @@ class RaftNode:
 
             return {'term': self.current_term, 'success': True}
 
-# --- Utility States ---
     async def _transition_to_leader(self):
-        """Inisialisasi saat node menjadi Leader."""
         self.state = RaftState.LEADER
         self.leader_id = self.node_id
-        # Inisialisasi Leader Volatile State
         self.next_index = {p: len(self.log) + 1 for p in self.peers}
         self.match_index = {p: len(self.log) for p in self.peers}
         print(f"Node {self.node_id}: Received majority votes. Becoming Leader.")
-        # Kirim Heartbeat pertama segera
         await self._leader_loop()
-    
+        
     def submit_command(self, command: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
-        """API internal untuk klien, hanya Leader yang boleh menerima command."""
         if self.state != RaftState.LEADER:
             return (False, self.leader_id)
         
         log_entry = (self.current_term, json.dumps(command))
         self.log.append(log_entry)
         
-        # Note: Replikasi akan terjadi di loop berikutnya. 
-        # API klien harus menunggu hingga log_entry ini di-commit dan diterapkan.
         return (True, None)

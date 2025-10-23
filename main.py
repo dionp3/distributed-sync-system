@@ -6,9 +6,9 @@ import uuid
 import time
 from aiohttp import web
 from dotenv import load_dotenv
-from typing import Dict, Any
+from typing import Dict, Any, List
 
-# Import Komponen dari src/ (Diasumsikan sudah diisi dengan benar)
+# Import Komponen dari src/
 from src.communication.message_passing import NodeCommunication
 from src.consensus.raft import RaftNode, RaftState
 from src.nodes.lock_manager import DistributedLockManager
@@ -17,56 +17,58 @@ from src.nodes.cache_node import DistributedCacheNode, CacheState
 
 load_dotenv()
 
-# --- Inisialisasi Global (Akan diisi berdasarkan jenis node) ---
+# --- Inisialisasi Global ---
 COMM = None
 RAFT_NODE = None
 LOCK_MANAGER = None
 QUEUE_NODE = None
 CACHE_NODE = None
 
-# --- UTILITY: Format Metrik untuk Prometheus ---
+# --- UTILITY FUNCTIONS ---
 def format_prometheus(metrics_dict: dict) -> str:
-    """Mengubah dictionary metrik menjadi format Prometheus text/plain."""
     output = "# HELP distributed_sync_metrics Metrics from the node\n"
     output += "# TYPE distributed_sync_metrics gauge\n"
     
-    # Simpan metrik berlabel dan numerik
     labeled_metrics = {}
     
     for key, value in metrics_dict.items():
         if key in ('node_id', 'state', 'status', 'is_leader'):
-            # Simpan sebagai label
             labeled_metrics[key] = str(value)
             continue
         
-        # Format nilai numerik (Contoh: term, commit_index, hits, misses)
         if isinstance(value, (int, float)):
             output += f"{key} {value}\n"
     
-    # Format metrik status/state (dengan label)
     node_id = labeled_metrics.get("node_id", "unknown")
 
-    if 'state' in labeled_metrics: # Raft State
+    if 'state' in labeled_metrics:
         output += f'raft_state_info{{node_id="{node_id}", raft_state="{labeled_metrics["state"]}"}} 1\n'
     if 'is_leader' in labeled_metrics:
         output += f'raft_is_leader {1 if labeled_metrics["is_leader"] == "True" else 0}\n'
-    if 'status' in labeled_metrics: # Queue Status
+    if 'status' in labeled_metrics:
         output += f'queue_node_status{{node_id="{node_id}", node_status="{labeled_metrics["status"]}"}} 1\n'
         
     return output.strip()
 
 def get_port_from_id(node_id: str, base_port: int) -> int:
-    """Mengambil port dari akhir ID node."""
     try:
-        # Mengasumsikan ID berakhir dengan angka (misal: node_lock_3 -> 3)
         return base_port + int(node_id.split('_')[-1])
     except:
         return base_port + 1
 
-# --- Setup API Routes ---
+def safe_json_load(env_var_name: str, default_val: Any = "{}"):
+    val = os.getenv(env_var_name)
+    if not val:
+        return json.loads(default_val)
+    try:
+        return json.loads(val)
+    except json.JSONDecodeError:
+        print(f"FATAL ERROR: Environment variable {env_var_name} has invalid JSON format: {val}")
+        sys.exit(1)
+
+# --- SETUP API ROUTES ---
 
 async def create_raft_routes(raft: RaftNode, lock_mgr: DistributedLockManager):
-    """Membuat route Raft dan Lock Manager."""
     routes = web.RouteTableDef()
 
     @routes.post('/raft/request_vote')
@@ -106,18 +108,13 @@ async def create_raft_routes(raft: RaftNode, lock_mgr: DistributedLockManager):
             'state': raft.state.value,
             'term': raft.current_term,
             'commit_index': raft.commit_index,
-            'is_leader': str(raft.state == RaftState.LEADER) # Kirim sebagai string untuk format_prometheus
+            'is_leader': str(raft.state == RaftState.LEADER)
         }
-        # Format ke text/plain untuk Prometheus
-        return web.Response(
-            text=format_prometheus(metrics),
-            content_type="text/plain; version=0.0.4"
-        )
+        return web.Response(text=format_prometheus(metrics), content_type="text/plain; version=0.0.4")
 
     return routes
 
 async def create_queue_routes(queue: DistributedQueueNode):
-    """Membuat route Distributed Queue."""
     routes = web.RouteTableDef()
 
     @routes.post('/queue/publish')
@@ -140,20 +137,12 @@ async def create_queue_routes(queue: DistributedQueueNode):
         
     @routes.get('/metrics')
     async def get_queue_metrics(request):
-        metrics = {
-            'node_id': queue.node_id, 
-            'status': 'ready' # Status sederhana untuk Queue Node
-        }
-        # Format ke text/plain untuk Prometheus
-        return web.Response(
-            text=format_prometheus(metrics),
-            content_type="text/plain; version=0.0.4"
-        )
+        metrics = {'node_id': queue.node_id, 'status': 'ready'}
+        return web.Response(text=format_prometheus(metrics), content_type="text/plain; version=0.0.4")
         
     return routes
 
 async def create_cache_routes(cache: DistributedCacheNode):
-    """Membuat route Distributed Cache."""
     routes = web.RouteTableDef()
     
     @routes.post('/cache/read')
@@ -176,17 +165,12 @@ async def create_cache_routes(cache: DistributedCacheNode):
         
     @routes.get('/metrics')
     async def get_cache_metrics(request):
-        metrics = cache.get_metrics() # Mengandung node_id, hits, misses, dll.
-        
-        # Format ke text/plain untuk Prometheus
-        return web.Response(
-            text=format_prometheus(metrics),
-            content_type="text/plain; version=0.0.4"
-        )
+        metrics = cache.get_metrics()
+        return web.Response(text=format_prometheus(metrics), content_type="text/plain; version=0.0.4")
 
     return routes
 
-# --- Inisialisasi Aplikasi Utama ---
+# --- INISIALISASI UTAMA ---
 async def init_app():
     global COMM, RAFT_NODE, LOCK_MANAGER, QUEUE_NODE, CACHE_NODE
     
@@ -194,17 +178,6 @@ async def init_app():
     NODE_ID = os.getenv("NODE_ID")
     REDIS_HOST = os.getenv("REDIS_HOST", "redis")
     NODE_TYPE = os.getenv("NODE_TYPE")
-
-    # Amankan parsing JSON dari environment variables (menangani string kosong "")
-    def safe_json_load(env_var_name: str, default_val: Any = "{}"):
-        val = os.getenv(env_var_name)
-        if not val:
-            return json.loads(default_val)
-        try:
-            return json.loads(val)
-        except json.JSONDecodeError:
-            print(f"FATAL ERROR: Environment variable {env_var_name} has invalid JSON format: {val}")
-            sys.exit(1)
 
     if NODE_TYPE == 'lock':
         PEERS = safe_json_load("RAFT_PEERS")
@@ -247,5 +220,4 @@ if __name__ == '__main__':
         print("Error: NODE_TYPE environment variable is not set correctly. Exiting.")
         sys.exit(1)
 
-    # Catatan: host='0.0.0.0' wajib agar dapat diakses dari luar container Docker
     web.run_app(init_app(), host='0.0.0.0', port=port)

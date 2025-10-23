@@ -4,18 +4,14 @@ import asyncio
 import uuid
 from typing import Dict, Any, Optional, List
 
-# --- PERBAIKAN KRITIS ---
-# Hapus placeholder yang menyebabkan crash 'AttributeError'
-# Ganti dengan import eksplisit dari modul Raft
-from src.consensus.raft import RaftNode, RaftState # <--- INI WAJIB!
+from src.consensus.raft import RaftNode, RaftState
 
 class DistributedLockManager:
     """State Machine untuk Raft, mengelola Lock Table dan Deadlock Detection."""
     def __init__(self, raft_node: Optional[RaftNode]):
         self.raft_node = raft_node
-        # Lock Table: {lock_name: {type: str, holders: List[str], expiry: float}}
         self.locks: Dict[str, Dict] = {} 
-        self.waiting_clients: Dict[str, asyncio.Event] = {} # {client_id: Event}
+        self.waiting_clients: Dict[str, asyncio.Event] = {}
 
     def is_leader(self):
         return self.raft_node is not None and self.raft_node.state == RaftState.LEADER
@@ -33,24 +29,19 @@ class DistributedLockManager:
             "expiry": time.time() + timeout
         }
 
-        # 1. Submit command ke Raft Log
         success, leader_hint = self.raft_node.submit_command(command)
         if not success:
             return {"success": False, "error": "SUBMIT_FAILED", "leader_hint": leader_hint}
 
-        # 2. Tunggu Event commit dari State Machine
         self.waiting_clients[client_id] = asyncio.Event()
         try:
-            # Tambahkan sedikit buffer pada timeout Raft
             await asyncio.wait_for(self.waiting_clients[client_id].wait(), timeout=timeout + 0.5) 
             
-            # 3. Cek status setelah diterapkan
             if self.locks.get(lock_name) and client_id in self.locks[lock_name]['holders']:
                 return {"success": True, "message": f"{lock_type} lock acquired"}
             else:
                 return {"success": False, "error": "LOCK_DENIED_OR_TIMEOUT"}
         except asyncio.TimeoutError:
-            # Ini adalah deadlock detection sisi klien (klien menyerah)
             return {"success": False, "error": "LOCK_TIMEOUT"}
         finally:
             self.waiting_clients.pop(client_id, None)
@@ -63,7 +54,6 @@ class DistributedLockManager:
         command = {"type": "RELEASE", "lock_name": lock_name, "client_id": client_id}
         success, leader_hint = self.raft_node.submit_command(command)
         
-        # Asumsikan submit berhasil dan replikasi akan terjadi
         return {"success": success, "message": "Release command submitted"}
 
     def apply_command(self, command: Dict[str, Any]):
@@ -77,10 +67,9 @@ class DistributedLockManager:
             current_lock = self.locks.get(lock_name)
             
             if not current_lock:
-                granted = True # Lock pertama kali
+                granted = True
             elif current_lock['type'] == 'shared' and lock_type == 'shared':
-                granted = True # Shared di Shared: OK
-            # Jika ada exclusive lock atau shared request exclusive: DENIED (implied by granted=False)
+                granted = True
             
             if granted:
                 if not current_lock:
@@ -88,27 +77,23 @@ class DistributedLockManager:
                 else:
                     self.locks[lock_name]['holders'].append(client_id)
                 
-                # Set Event untuk klien yang menunggu (jika ada)
                 event = self.waiting_clients.get(client_id)
                 if event: event.set()
                 return True
 
         elif command['type'] == 'RELEASE':
             lock_name = command['lock_name']
-            client_id = command.get('client_id', 'SYSTEM_TIMEOUT') # Ambil ID client
+            client_id = command.get('client_id', 'SYSTEM_TIMEOUT')
             
             if lock_name in self.locks:
                  current_lock = self.locks[lock_name]
                  
-                 # Hapus holder jika ada (baik klien normal atau SYSTEM_TIMEOUT)
                  if client_id in current_lock['holders']:
                       current_lock['holders'].remove(client_id)
 
-                 # Jika tidak ada holder yang tersisa, hapus entry lock dari table.
                  if not current_lock['holders'] or client_id == 'SYSTEM_TIMEOUT': 
-                      # HAPUS TOTAL JIKA RELEASE ADALAH DARI SISTEM
-                      del self.locks[lock_name]
-                      return True
+                     del self.locks[lock_name]
+                     return True
             return False
             
     async def deadlock_monitor(self):
@@ -122,9 +107,8 @@ class DistributedLockManager:
                         expired_locks.append(name)
 
                 for name in expired_locks:
-                    # SYSTEM_TIMEOUT adalah client_id yang memaksa rilis
                     release_cmd = {"type": "RELEASE", "lock_name": name, "client_id": "SYSTEM_TIMEOUT"}
                     print(f"DEADLOCK DETECTED: Lock {name} expired. Force releasing.")
                     self.raft_node.submit_command(release_cmd) 
                     
-            await asyncio.sleep(1) # Cek setiap 1 detik
+            await asyncio.sleep(1)
