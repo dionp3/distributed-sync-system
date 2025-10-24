@@ -136,7 +136,8 @@ Invoke-RestMethod -Uri $urlQueuePublish -Method Post -Headers $Headers -Body (@{
 
 # 2.2 Consume Pertama (Tanpa ACK)
 $msgResult = Invoke-RestMethod -Uri $urlQueueConsume -Method Post -ContentType "application/json" -Body (@{topic=$topicName} | ConvertTo-Json)
-$MessageID = $msgResult.message.id
+$MessageObject = $msgResult | ConvertTo-Json | ConvertFrom-Json
+$MessageID = $MessageObject.message.id
 Write-Host "    Pesan dikonsumsi (ID: $MessageID). TIDAK ada ACK."
 
 # 2.3 Uji Redelivery
@@ -194,7 +195,9 @@ Write-Host "========================================================"
 
 
 
+
 python .\tests\test_e2e_functionality.py
+
 
 
 # =====================================================================

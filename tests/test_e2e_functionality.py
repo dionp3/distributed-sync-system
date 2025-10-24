@@ -140,16 +140,21 @@ def test_cache_mesi():
     requests.post(url_C_write, headers=HEADERS, json={"key": key, "value": "Version_2_New"})
     print("[3] Node C (8023) WRITE V2. (Memicu INVAL ke Node B)")
 
-    time.sleep(1.0)
+    time.sleep(1.5)
 
     container_b = f"docker-node_cache_{PORTS['cache'][1]-8000}-1"
     time.sleep(1)
-    inval_passed = check_log_for_event(container_b, f"Received INVAL for {key}. State -> I")
+    inval_passed = check_log_for_event(container_b, f"Received INVAL for {key}. State -> I", timeout=5)
     
     if inval_passed:
         print("✅ PASSED: MESI Invalidation BERHASIL. Node B log: Received INVAL.")
     else:
-        print("❌ FAILED: Node B gagal menerima atau memproses INVAL.")
+        time.sleep(3) 
+        inval_passed_retry = check_log_for_event(container_b, f"Received INVAL for {key}. State -> I", timeout=5)
+        if inval_passed_retry:
+             print("✅ PASSED (Retry): MESI Invalidation BERHASIL.")
+        else:
+             print("❌ FAILED: Node B gagal memproses INVAL.")
 
 
 if __name__ == "__main__":

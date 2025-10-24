@@ -47,7 +47,7 @@ Proyek ini telah menyelesaikan semua *Core Requirements* dengan fokus pada ketah
 
     ```bash
     git clone 
-    cd distributed-sync-system
+    cd distributed_sync_system
     ```
 
 2.  **Siapkan Environment:**
