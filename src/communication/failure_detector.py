@@ -7,7 +7,6 @@ class FailureDetector:
         self.node_id = node_id
         self.peer_ids = peer_ids
         self.election_timeout = election_timeout
-        # Dicatat oleh AppendEntries (Heartbeat) RPC
         self.last_seen: Dict[str, float] = {pid: time.time() for pid in peer_ids}
         self.is_leader_active = True
         self.leader_id: Optional[str] = None
@@ -30,7 +29,7 @@ class FailureDetector:
         if (time.time() - last_contact_time) > self.election_timeout:
             if self.is_leader_active:
                 print(f"[{self.node_id}] LEADER FAILURE DETECTED: {current_leader_id} timeout.")
-                self.is_leader_active = False # Cegah log berulang
+                self.is_leader_active = False 
             return True
         
         return False

@@ -8,7 +8,6 @@ from aiohttp import web
 from dotenv import load_dotenv
 from typing import Dict, Any, List
 
-# Import Komponen dari src/
 from src.communication.message_passing import NodeCommunication
 from src.consensus.raft import RaftNode, RaftState
 from src.nodes.lock_manager import DistributedLockManager
@@ -17,14 +16,12 @@ from src.nodes.cache_node import DistributedCacheNode, CacheState
 
 load_dotenv()
 
-# --- Inisialisasi Global ---
 COMM = None
 RAFT_NODE = None
 LOCK_MANAGER = None
 QUEUE_NODE = None
 CACHE_NODE = None
 
-# --- UTILITY FUNCTIONS ---
 def format_prometheus(metrics_dict: dict) -> str:
     output = "# HELP distributed_sync_metrics Metrics from the node\n"
     output += "# TYPE distributed_sync_metrics gauge\n"
@@ -66,7 +63,6 @@ def safe_json_load(env_var_name: str, default_val: Any = "{}"):
         print(f"FATAL ERROR: Environment variable {env_var_name} has invalid JSON format: {val}")
         sys.exit(1)
 
-# --- SETUP API ROUTES ---
 
 async def create_raft_routes(raft: RaftNode, lock_mgr: DistributedLockManager):
     routes = web.RouteTableDef()
@@ -170,7 +166,7 @@ async def create_cache_routes(cache: DistributedCacheNode):
 
     return routes
 
-# --- INISIALISASI UTAMA ---
+
 async def init_app():
     global COMM, RAFT_NODE, LOCK_MANAGER, QUEUE_NODE, CACHE_NODE
     

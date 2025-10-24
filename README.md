@@ -1,4 +1,4 @@
-# 🚀 Distributed Sync System (DSS)
+# Distributed Sync System (DSS)
 
 Sistem ini mensimulasikan arsitektur *distributed systems* modern, berfokus pada **sinkronisasi data yang konsisten**, *fault tolerance*, dan skalabilitas. DSS mengimplementasikan tiga mekanisme konsensus/koherensi yaitu **Raft Consensus**, **Consistent Hashing**, dan **MESI Cache Coherence**, semuanya dengan menggunakan Docker Compose.
 
@@ -10,24 +10,24 @@ Sistem ini mensimulasikan arsitektur *distributed systems* modern, berfokus pada
 
 Proyek ini telah menyelesaikan semua *Core Requirements* dengan fokus pada ketahanan di bawah kegagalan.
 
-### 🔑 1. Distributed Lock Manager (DLM)
+### 1. Distributed Lock Manager (DLM)
 
   * **Algoritma:** **Raft Consensus** (Implementasi *from scratch*).
   * **Ketahanan:** Mendukung *Leader Election* otomatis dan *Log Replication* ke 3 node.
   * **Safety:** Menerapkan *Deadlock Detection* berbasis *timeout* yang berhasil memicu *release* otomatis pada *lock* yang macet (*verified* saat *load test*).
 
-### 📨 2. Distributed Queue System (DQS)
+### 2. Distributed Queue System (DQS)
 
   * **Distribusi:** **Consistent Hashing** digunakan untuk merutekan *topic* ke *Queue Node* yang bertanggung jawab, menjamin skalabilitas horizontal.
   * **Delivery Guarantee:** Menerapkan **At-Least-Once Delivery** melalui mekanisme *Pending Acknowledgement Queue* dan *Redelivery Monitor* (*asyncio task*).
   * **Persistence:** Menggunakan **Redis** untuk *message persistence* dan *state storage*.
 
-### 💻 3. Distributed Cache Coherence (DCC)
+### 3. Distributed Cache Coherence (DCC)
 
   * **Protokol:** Protokol **MESI (Modified, Exclusive, Shared, Invalid)** berbasis *invalidation* untuk menjaga koherensi data di 3 node Cache.
   * **Efisiensi:** Menggunakan kebijakan *Cache Replacement* **LRU (Least Recently Used)**, didukung oleh *Write-Back* untuk memastikan tidak ada data Modified yang hilang saat *eviction*.
 
-### 🐳 4. Containerization & Monitoring
+### 4. Containerization & Monitoring
 
   * **Orkestrasi:** Deployment penuh menggunakan **Docker Compose** (total 11 *services*).
   * **Observability:** Semua node Python mengekspos *endpoint* `/metrics` yang di-*scrape* oleh **Prometheus** dan divisualisasikan oleh **Grafana** (`http://localhost:3000`).
@@ -68,11 +68,41 @@ Proyek ini telah menyelesaikan semua *Core Requirements* dengan fokus pada ketah
 
     Semua *services* (9 node aplikasi + 2 Monitoring + 1 Redis) harus berstatus **`Up`**.
 
-### Pengujian Fungsional Cepat (PowerShell/cURL)
+### Pengujian Fungsional (PowerShell)
 
 #### 1\. Identifikasi Leader Raft
 
 Gunakan *probe* pada port 8001, 8002, 8003 untuk menemukan Leader aktif (`$LeaderPort`).
+
+    $Ports = 8001, 8002, 8003
+    $Headers = @{"Content-Type" = "application/json"}
+    $LeaderPort = $null 
+    $QueuePort = 8011
+    $CachePort1 = 8021
+    $CachePort2 = 8022
+    $CachePort3 = 8023
+    $LOCK_TIMEOUT_SECS = 10
+    $REDELIVERY_WAIT_SECS = 35 
+
+    function Find-RaftLeader {
+        $probeBody = @{lock_name = "probe_lock"; client_id = "PowerShell_Prober"; lock_type = "exclusive"; timeout = 1.0} | ConvertTo-Json
+        
+        Write-Host "--- Probing untuk Leader Raft ---"
+        foreach ($Port in $Ports) {
+            $lockURL = "http://localhost:$Port/lock/acquire"
+            try {
+                $result = Invoke-RestMethod -Uri $lockURL -Method Post -Headers $Headers -Body $probeBody -TimeoutSec 1
+                if ($result.success -eq $True) {
+                    Write-Host "✅ LEADER DITEMUKAN: Port $Port."
+                    # Rilis probe lock
+                    Invoke-RestMethod -Uri "http://localhost:$Port/lock/release" -Method Post -Headers $Headers -Body (@{lock_name = "probe_lock"; client_id = "PowerShell_Prober"} | ConvertTo-Json) | Out-Null
+                    return $Port
+                }
+            } catch {}
+        }
+        Write-Host "⚠️ GAGAL menemukan Leader yang stabil."
+        return $null
+    }
 
 #### 2\. Uji Failover Lock Manager (Wajib Demo)
 
@@ -92,9 +122,6 @@ Ini membuktikan *failover* berjalan. Asumsikan Leader di Port 8003:
 
 -----
 
-## 🔗 Link Pengumpulan
+## Video Demo
 
-  * **Link Video Demonstrasi:** []
-  * **PDF Report:** `report_[NIM]_[Nama].pdf`
-
------
+[]
