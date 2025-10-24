@@ -124,4 +124,4 @@ Ini membuktikan *failover* berjalan. Asumsikan Leader di Port 8003:
 
 ## Video Demo
 
-[]
+[bentar ya belum dibikin]
