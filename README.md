@@ -124,4 +124,4 @@ Ini membuktikan *failover* berjalan. Asumsikan Leader di Port 8003:
 
 ## Video Demo
 
-[bentar ya belum dibikin]
+[bentar belum bikin, masih di rawat inap, abis operasi lepas pen di tangan, takut ganggu pasien lain di ruangan]

@@ -98,7 +98,7 @@ class DistributedQueueNode:
         
         message_str = self.redis_conn.hget(meta_key, message_id)
         
-        deleted_count = self.redis_conn.hdel(meta_key, message_id) 
+        deleted_count = self.redis_conn.hdel(meta_key, message_id)
         
         if deleted_count > 0 and message_str:
             pipe = self.redis_conn.pipeline()
