@@ -200,6 +200,35 @@ python .\tests\test_e2e_functionality.py
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+note lama 👌
+
 # =====================================================================
 # 1. PERSIAPAN GLOBAL DAN IDENTIFIKASI LEADER RAFT
 #    Tujuan: Menemukan Leader Raft yang aktif dan menyimpan portnya.

@@ -1,3 +1,5 @@
+# masih ada problem, belum finish
+
 import requests
 import json
 import time

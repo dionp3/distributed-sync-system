@@ -11,7 +11,7 @@ Proses *deployment* sistem sinkronisasi terdistribusi (DSS) yang terdiri dari 11
 | Persyaratan | Detail | Verifikasi |
 | :--- | :--- | :--- |
 | **Docker Engine** | Docker Desktop harus terinstal dan berjalan. | `docker --version` |
-| **Docker Compose** | Docker Compose V2 harus terinstal. | `docker compose version` |
+| **Docker Compose** | Docker Compose harus terinstal. | `docker compose version` |
 | **Python Libraries** | Pustaka wajib (`redis`, `aiohttp`, `locust`) harus diinstal dalam *virtual environment*. | `pip install -r requirements.txt` |
 | **Resource** | Minimal 4 GB RAM/2 vCPU dialokasikan untuk Docker Engine. | Cek pengaturan Docker Desktop Anda. |
 
