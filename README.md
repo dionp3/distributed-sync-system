@@ -68,65 +68,91 @@ Proyek ini telah menyelesaikan semua *Core Requirements* dengan fokus pada ketah
 
     Semua *services* (9 node aplikasi + 2 Monitoring + 1 Redis) harus berstatus **`Up`**.
 
-### Pengujian Fungsional (PowerShell)
+## Panduan Pengujian Fungsionalitas Inti (E2E)
 
-#### 1\. Identifikasi Leader Raft
+File **`full_functional_tests.ps1`** adalah *suite* pengujian *end-to-end* (E2E) berbasis PowerShell yang secara otomatis memvalidasi semua **70 poin *Core Requirements***. Skrip ini mensimulasikan kondisi *contention*, *deadlock*, dan *fault recovery* secara berurutan.
 
-Gunakan *probe* pada port 8001, 8002, 8003 untuk menemukan Leader aktif (`$LeaderPort`).
+### Cara Menjalankan Test Suite
 
-  ```bash
-    $Ports = 8001, 8002, 8003
-    $Headers = @{"Content-Type" = "application/json"}
-    $LeaderPort = $null 
-    $QueuePort = 8011
-    $CachePort1 = 8021
-    $CachePort2 = 8022
-    $CachePort3 = 8023
-    $LOCK_TIMEOUT_SECS = 10
-    $REDELIVERY_WAIT_SECS = 35 
+Pastikan *virtual environment* (`venv`) Anda aktif dan semua *services* Docker berjalan (`Up`).
 
-    function Find-RaftLeader {
-        $probeBody = @{lock_name = "probe_lock"; client_id = "PowerShell_Prober"; lock_type = "exclusive"; timeout = 1.0} | ConvertTo-Json
-        
-        Write-Host "--- Probing untuk Leader Raft ---"
-        foreach ($Port in $Ports) {
-            $lockURL = "http://localhost:$Port/lock/acquire"
-            try {
-                $result = Invoke-RestMethod -Uri $lockURL -Method Post -Headers $Headers -Body $probeBody -TimeoutSec 1
-                if ($result.success -eq $True) {
-                    Write-Host "✅ LEADER DITEMUKAN: Port $Port."
-                    Invoke-RestMethod -Uri "http://localhost:$Port/lock/release" -Method Post -Headers $Headers -Body (@{lock_name = "probe_lock"; client_id = "PowerShell_Prober"} | ConvertTo-Json) | Out-Null
-                    return $Port
-                }
-            } catch {}
-        }
-        Write-Host "⚠️ GAGAL menemukan Leader yang stabil."
-        return $null
-    }
-
-    $LeaderPort = Find-RaftLeader
-    if (-not $LeaderPort) { exit }
-
-    Write-Host "🔑 Raft Leader Aktif di Port $LeaderPort."
-  ```
-
-#### 2\. Uji Failover Lock Manager (Wajib Demo)
-
-Ini membuktikan *failover* berjalan. Asumsikan Leader di Port 8003:
-
-1.  **Acquire Lock:** `curl -X POST http://localhost:8003/lock/acquire ...`
-2.  **Stop Leader:** `docker stop docker-node_lock_3-1`
-3.  **Verifikasi Leader Baru:** Jalankan *probe* lagi. Node 8001 atau 8002 akan menjadi Leader baru.
-4.  **Acquire pada Leader Baru:** `curl -X POST http://localhost:8001/lock/acquire ...` (Harus berhasil jika *lock* lama sudah dirilis/di-*timeout*).
-
-#### 3\. Uji Redelivery Queue (At-Least-Once)
-
-1.  **Publish:** `curl -X POST http://localhost:8011/queue/publish ...`
-2.  **Consume (Tanpa ACK):** `curl -X POST http://localhost:8011/queue/consume ...`
-3.  **Tunggu 35 detik** (Timeout Monitor).
-4.  **Consume Lagi:** *Request* ini akan mendapatkan pesan yang sama (Bukti *At-Least-Once*).
+```bash
+.\tests\full_functional_tests.ps1
+```
 
 -----
+
+Skrip ini dibagi menjadi tiga bagian besar, masing-masing memvalidasi satu klaster fungsional.
+
+### A. Uji Distributed Lock Manager (DLM) 
+
+**Tujuan:** Membuktikan Raft Consensus menjamin *Linearizability* dan *Deadlock Monitor* berfungsi.
+
+| Langkah Kritis | Narasi Logis | Hasil Verifikasi Kunci |
+| :--- | :--- | :--- |
+| **`Find-RaftLeader`** | Mengidentifikasi Leader Raft yang aktif (misalnya, Port 8003) sebelum memulai. | **`✅ LEADER DITEMUKAN: Port XXXX`** |
+| **1.2 Contention** | Client A memegang *lock*. Client B mencoba *acquire* dan **ditolak** (`Status Acquire B: False`). | **Raft Consensus** membuktikan *lock state* konsisten. |
+| **1.3 Deadlock Detection** | *Lock* ditinggalkan Client A dan *script* menunggu *timeout* (12 detik). | Log Leader harus mencatat **`DEADLOCK DETECTED`**. |
+| **1.4 Acquire Ulang** | Client B berhasil *acquire* kembali. | **`✅ PASSED: Deadlock Detection BERHASIL.`** (Membuktikan *release* otomatis berhasil). |
+
+### B. Uji Distributed Queue System (DQS) 
+
+**Tujuan:** Membuktikan jaminan *At-Least-Once Delivery* melalui *Redelivery Monitor*.
+
+| Langkah Kritis | Narasi Logis | Hasil Verifikasi Kunci |
+| :--- | :--- | :--- |
+| **2.2 Consume Pertama** | Pesan dikonsumsi tetapi **TIDAK ada ACK** (Simulasi Kegagalan Konsumen). Pesan pindah ke *Pending Queue*. | Log mencatat `Pesan dikonsumsi (ID: [ID])`. |
+| **2.3 Redelivery Wait** | Skrip menunggu **35 detik** (melebihi *timeout* 30s). | *Background Monitor* mengambil alih pesan yang macet. |
+| **2.4 Consume Kedua** | *Request* kedua berhasil mengambil pesan. | **`✅ PASSED: At-Least-Once Delivery BERHASIL.`** (ID pesan kedua cocok dengan ID pertama). |
+
+### C. Uji Distributed Cache Coherence (DCC) 
+
+**Tujuan:** Membuktikan **MESI Invalidation** bekerja di seluruh klaster.
+
+| Langkah Kritis | Narasi Logis | Hasil Verifikasi Kunci |
+| :--- | :--- | :--- |
+| **3.1 Write (Node 1)** | Node 1 menulis V1 (State $I \to M$) dan memicu *Invalidate Broadcast*. | *State* awal diatur. |
+| **3.2 Read (Node 2)** | Node 2 membaca V1 (State $I \to S$). | Node B kini memegang salinan *Shared*. |
+| **3.3 Write (Node 3)** | Node 3 menulis V2 (State $I \to M$). Ini memicu RPC *Invalidate* ke Node 2. | Log Node 8023 (C) mencatat *Broadcasting INVAL*. |
+| **3.4 Verifikasi Log** | *Script* memeriksa *logs* Node 8022. | **`✅ PASSED: MESI Invalidation BERHASIL. Node B mengubah state ke Invalid.`** (Membuktikan *coherence* terjamin). |
+
+-----
+
+## Pengujian Kinerja (Load Test Scenario) 
+
+Fase ini mengukur *Throughput* dan *Latency* sistem di bawah beban tinggi (50+ pengguna). Kita menggunakan **Locust** untuk mensimulasikan *traffic* gabungan ke seluruh klaster.
+
+### Struktur Load Test
+
+File **`benchmarks/load_test_scenarios.py`**  mensimulasikan *user* yang secara bersamaan melakukan operasi di tiga klaster (Raft, Queue, Cache) dengan bobot berbeda:
+
+  * **Bobot Tinggi (3):** Operasi Lock (Paling sensitif terhadap Latensi Raft).
+  * **Bobot Sedang (2):** Operasi Queue (Menguji Consistent Hashing dan Redis I/O).
+  * **Bobot Rendah (1):** Operasi Cache (Menguji Hit/Miss dan Invalidation).
+
+### Eksekusi dan Akses Data
+
+Pastikan semua *services* Docker berjalan (`docker compose ps`) dan *virtual environment* (`venv`)  aktif.
+
+1.  **Jalankan Locust Generator:**
+    Gunakan `python -m locust` untuk memulai generator beban.
+
+    ```bash
+    python -m locust -f benchmarks/load_test_scenarios.py
+    ```
+
+2.  **Akses Web Interface:**
+    Buka *browser* dan navigasikan ke: `http://localhost:8089`
+
+3.  **Konfigurasi dan Mulai Test:**
+    Masukkan parameter berikut di UI Locust:
+
+      * **Number of Users:** `50` (Simulasi beban tinggi)
+      * **Spawn Rate:** `5` (Kecepatan *user* baru dibuat)
+      * **Host:** `http://localhost`
+
+4.  **Analisis Data:**
+    Biarkan tes berjalan selama 5–10 menit. Data kinerja akan terekam dan dapat dianalisis di *tab* **Statistics** Locust.
 
 ## Video Demo
 
