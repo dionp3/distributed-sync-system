@@ -156,4 +156,4 @@ Pastikan semua *services* Docker berjalan (`docker compose ps`) dan *virtual env
 
 ## Video Demo
 
-[bentar belum bikin, masih di rawat inap, abis operasi lepas pen di tangan, takut ganggu pasien lain di ruangan]
+[bentar belum bikin, masih di rawat inap, abis operasi lepas pen di tangan]
