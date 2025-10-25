@@ -70,7 +70,7 @@ Proyek ini telah menyelesaikan semua *Core Requirements* dengan fokus pada ketah
 
 ## Panduan Pengujian Fungsionalitas Inti (E2E)
 
-File **`full_functional_tests.ps1`** adalah *suite* pengujian *end-to-end* (E2E) berbasis PowerShell yang secara otomatis memvalidasi semua **70 poin *Core Requirements***. Skrip ini mensimulasikan kondisi *contention*, *deadlock*, dan *fault recovery* secara berurutan.
+File **`full_functional_tests.ps1`** adalah *suite* pengujian *end-to-end* (E2E) berbasis PowerShell yang secara otomatis memvalidasi semua ***Core Requirements***. Skrip ini mensimulasikan kondisi *contention*, *deadlock*, dan *fault recovery* secara berurutan.
 
 ### Cara Menjalankan Test Suite
 
