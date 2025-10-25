@@ -74,6 +74,7 @@ Proyek ini telah menyelesaikan semua *Core Requirements* dengan fokus pada ketah
 
 Gunakan *probe* pada port 8001, 8002, 8003 untuk menemukan Leader aktif (`$LeaderPort`).
 
+  ```bash
     $Ports = 8001, 8002, 8003
     $Headers = @{"Content-Type" = "application/json"}
     $LeaderPort = $null 
@@ -94,7 +95,6 @@ Gunakan *probe* pada port 8001, 8002, 8003 untuk menemukan Leader aktif (`$Leade
                 $result = Invoke-RestMethod -Uri $lockURL -Method Post -Headers $Headers -Body $probeBody -TimeoutSec 1
                 if ($result.success -eq $True) {
                     Write-Host "✅ LEADER DITEMUKAN: Port $Port."
-                    # Rilis probe lock
                     Invoke-RestMethod -Uri "http://localhost:$Port/lock/release" -Method Post -Headers $Headers -Body (@{lock_name = "probe_lock"; client_id = "PowerShell_Prober"} | ConvertTo-Json) | Out-Null
                     return $Port
                 }
@@ -103,6 +103,12 @@ Gunakan *probe* pada port 8001, 8002, 8003 untuk menemukan Leader aktif (`$Leade
         Write-Host "⚠️ GAGAL menemukan Leader yang stabil."
         return $null
     }
+
+    $LeaderPort = Find-RaftLeader
+    if (-not $LeaderPort) { exit }
+
+    Write-Host "🔑 Raft Leader Aktif di Port $LeaderPort."
+  ```
 
 #### 2\. Uji Failover Lock Manager (Wajib Demo)
 

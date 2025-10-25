@@ -67,7 +67,6 @@ function Find-RaftLeader {
             $result = Invoke-RestMethod -Uri $lockURL -Method Post -Headers $Headers -Body $probeBody -TimeoutSec 1
             if ($result.success -eq $True) {
                 Write-Host "✅ LEADER DITEMUKAN: Port $Port."
-                # Rilis probe lock
                 Invoke-RestMethod -Uri "http://localhost:$Port/lock/release" -Method Post -Headers $Headers -Body (@{lock_name = "probe_lock"; client_id = "PowerShell_Prober"} | ConvertTo-Json) | Out-Null
                 return $Port
             }
@@ -77,7 +76,6 @@ function Find-RaftLeader {
     return $null
 }
 
-# --- 0. START EXECUTION ---
 $LeaderPort = Find-RaftLeader
 if (-not $LeaderPort) { exit }
 
