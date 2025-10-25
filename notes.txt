@@ -43,7 +43,7 @@ $env:PYTHONPATH='.' ; pytest .\tests\integration\test_raft_cluster.py
 
 
 # =====================================================================
-# Distributed Sync System - Full Functional Test Suite (70 Poin Core)
+# Distributed Sync System - Full Functional Test Suite 
 # =====================================================================
 
 # --- 0. PERSIAPAN GLOBAL ---
@@ -81,7 +81,9 @@ function Find-RaftLeader {
 $LeaderPort = Find-RaftLeader
 if (-not $LeaderPort) { exit }
 
-Write-Host "🔑 Raft Leader Aktif di Port $LeaderPort. Memulai pengujian..."
+Write-Host "🔑 Raft Leader Aktif di Port $LeaderPort."
+
+Write-Host "Memulai pengujian..."
 $lockAcquireURL = "http://localhost:$LeaderPort/lock/acquire"
 $lockReleaseURL = "http://localhost:$LeaderPort/lock/release"
 
@@ -122,7 +124,7 @@ if ($finalResult.success -eq $True) {
 if ($deadlockPassed) { Write-Host "✅ LOG CHECK: Deadlock pesan ditemukan di log." }
 
 # =====================================================================
-# 2. UJI DISTRIBUTED QUEUE SYSTEM - AT-LEAST-ONCE DELIVERY (20 Pts)
+# 2. UJI DISTRIBUTED QUEUE SYSTEM - AT-LEAST-ONCE DELIVERY 
 # =====================================================================
 Write-Host "`n======================= DQS (Queue) Test ======================="
 $topicName = "INVOICE_PROCESS"
@@ -156,7 +158,7 @@ if ($msgResult2.message.id -eq $MessageID) {
 }
 
 # =====================================================================
-# 3. UJI DISTRIBUTED CACHE COHERENCE (MESI) (15 Pts)
+# 3. UJI DISTRIBUTED CACHE COHERENCE (MESI) 
 # =====================================================================
 Write-Host "`n====================== DCC (MESI) Test ======================="
 $CacheKey = "USER_CONFIG_FILE"
