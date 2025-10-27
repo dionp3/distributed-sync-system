@@ -57,7 +57,7 @@ Proyek ini telah menyelesaikan semua *Core Requirements* dengan fokus pada ketah
     Perintah ini akan membangun *image* Python dan meluncurkan 11 *services* di *background*.
 
     ```bash
-    docker compose -f docker/docker-compose.yml up --build -d
+    docker compose -f docker/docker-compose.yml --env-file .env up --build -d
     ```
 
 4.  **Verifikasi Status:**
